@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Golden Ratio Detector — Face / Building / Logo</title>
+  <style>
+    :root{--bg:#0f1724;--card:#0b1220;--accent:#e2b84d;color:white}
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;margin:0;background:linear-gradient(180deg,#051023 0%,#071127 100%);color:#e6eef8}
+    .wrap{max-width:980px;margin:28px auto;padding:18px;background:rgba(255,255,255,0.02);border-radius:12px;box-shadow:0 6px 30px rgba(2,6,23,0.6)}
+    h1{margin:0 0 10px;font-size:20px}
+    .controls{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+    .controls > *{background:rgba(255,255,255,0.03);padding:10px;border-radius:8px}
+    canvas{background:#0b1220;border-radius:8px;max-width:100%;display:block}
+    .results{margin-top:12px;display:flex;gap:12px;flex-wrap:wrap}
+    .panel{background:rgba(255,255,255,0.02);padding:12px;border-radius:10px;min-width:220px}
+    button{cursor:pointer;padding:8px 12px;border-radius:8px;border:0;background:var(--accent);color:#041022;font-weight:600}
+    input[type=file]{color:transparent}
+    .hint{font-size:12px;color:#bcd2ff}
+    .ratio-good{color:#9ae6b4}
+    .ratio-bad{color:#ffb4b4}
+    .small{font-size:13px;color:#bcd2ff}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Golden Ratio Detector — Face / Building / Logo</h1>
+    <div class="controls">
+      <div>
+        <label class="small">Upload image</label><br>
+        <input id="file" type="file" accept="image/*">
+        <div class="hint">Use face mode for portraits (automatic). Use Manual for buildings or logos.</div>
+      </div>
+
+      <div>
+        <label class="small">Mode</label><br>
+        <select id="mode">
+          <option value="face">Face (auto landmarks)</option>
+          <option value="manual">Manual (click points)</option>
+          <option value="edges">Auto edges (suggest points)</option>
+        </select>
+      </div>
+
+      <div>
+        <label class="small">Compare to</label><br>
+        <select id="compare">
+          <option value="phi">Golden ratio φ ≈ 1.618</option>
+          <option value="inverse">1/φ ≈ 0.618</option>
+        </select>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:8px;justify-content:center">
+        <button id="run">Analyze</button>
+        <button id="clear">Clear points</button>
+      </div>
+
+      <div class="panel" style="min-width:260px">
+        <div style="font-weight:700">How it works</div>
+        <div class="small">Face mode loads a lightweight landmarks model (TensorFlow). It measures several facial distances and compares their ratios to φ. Manual lets you click two segments (A→B and C→D) and computes ratio A-B / C-D. Edges uses simple auto-suggestion but you should verify points.</div>
+      </div>
+    </div>
+
+    <div>
+      <canvas id="c" width="800" height="600"></canvas>
+    </div>
+
+    <div class="results">
+      <div class="panel" id="measurements"><strong>Measurements</strong><div id="measlist" class="small"></div></div>
+      <div class="panel" id="summary"><strong>Summary</strong><div id="summarytxt" class="small"></div></div>
+      <div class="panel"><strong>Tips</strong><div class="small">For buildings & logos use Manual. Click two points for segment A, then two for segment B. Try to use visually consistent edges (e.g., full width vs full height).</div></div>
+    </div>
+  </div>
+
+  <!-- TensorFlow face-landmarks-detection from CDN (will be loaded only when user chooses face mode) -->
+  <script>
+  // Helper math
+  function dist(a,b){const dx=a.x-b.x, dy=a.y-b.y; return Math.hypot(dx,dy);}
+
+  // DOM
+  const fileIn = document.getElementById('file');
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+  const modeSel = document.getElementById('mode');
+  const runBtn = document.getElementById('run');
+  const clearBtn = document.getElementById('clear');
+  const measlist = document.getElementById('measlist');
+  const summarytxt = document.getElementById('summarytxt');
+  const compareSel = document.getElementById('compare');
+
+  let img = new Image();
+  let imgLoaded = false;
+  let model = null; // face model
+  let manualPoints = []; // [{x,y}] pairs, user clicks
+
+  // Basic draw
+  function drawImageFit(){
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    if(!imgLoaded) return;
+    const iw=img.width, ih=img.height;
+    const cw=canvas.width, ch=canvas.height;
+    const r = Math.min(cw/iw, ch/ih);
+    const nw = iw*r, nh = ih*r;
+    const ox = (cw-nw)/2, oy = (ch-nh)/2;
+    ctx.drawImage(img, 0, 0, iw, ih, ox, oy, nw, nh);
+    return {ox,oy,nw,nh,scale:r};
+  }
+
+  fileIn.addEventListener('change', e=>{
+    const f = e.target.files && e.target.files[0];
+    if(!f) return;
+    const url = URL.createObjectURL(f);
+    img.onload = ()=>{ imgLoaded=true; drawImageFit(); URL.revokeObjectURL(url); };
+    img.src = url;
+  });
+
+  // Manual click handler
+  canvas.addEventListener('click', e=>{
+    if(modeSel.value !== 'manual' && modeSel.value !== 'edges') return;
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left; const y = e.clientY - rect.top;
+    manualPoints.push({x,y});
+    // draw dot
+    ctx.fillStyle = '#ffda6b'; ctx.beginPath(); ctx.arc(x,y,6,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='white'; ctx.font='12px monospace'; ctx.fillText(manualPoints.length, x+8, y-8);
+    if(manualPoints.length>=4){ // compute
+      const A=manualPoints[0], B=manualPoints[1], C=manualPoints[2], D=manualPoints[3];
+      const d1=dist(A,B), d2=dist(C,D); showRatio(d1,d2,'Manual');
+    }
+  });
+
+  clearBtn.addEventListener('click', ()=>{ manualPoints=[]; drawImageFit(); measlist.innerHTML=''; summarytxt.innerHTML=''; });
+
+  runBtn.addEventListener('click', async ()=>{
+    if(!imgLoaded){ alert('Upload an image first.'); return; }
+    measlist.innerHTML=''; summarytxt.innerHTML='';
+    drawImageFit();
+    if(modeSel.value === 'face'){
+      await ensureFaceModel();
+      if(!model){ alert('Face model failed to load.'); return; }
+      await analyzeFace();
+    }else if(modeSel.value === 'manual'){
+      if(manualPoints.length<4){ summarytxt.innerHTML='Click 4 points (A,B) and (C,D) on the canvas to form two segments.'; return; }
+      const A=manualPoints[0], B=manualPoints[1], C=manualPoints[2], D=manualPoints[3];
+      const d1=dist(A,B), d2=dist(C,D); showRatio(d1,d2,'Manual');
+    }else if(modeSel.value === 'edges'){
+      await autoEdgeSuggest();
+    }
+  });
+
+  function showRatio(d1,d2,label){
+    const ratio = d1/d2;
+    const phi = 1.618033988749895;
+    const target = compareSel.value==='phi'?phi:1/phi;
+    const pct = Math.abs((ratio-target)/target)*100;
+    measlist.innerHTML = `Segment A: ${d1.toFixed(1)} px<br>Segment B: ${d2.toFixed(1)} px<br>Ratio (A/B): <strong>${ratio.toFixed(3)}</strong>`;
+    const closenessClass = pct<5? 'ratio-good' : 'ratio-bad';
+    summarytxt.innerHTML = `<div class='${closenessClass}'>Compared to ${target.toFixed(6)} → ${pct.toFixed(2)}% difference</div><div class='small'>Label: ${label}</div>`;
+  }
+
+  // ---- Face detection using TensorFlow face-landmarks-detection ----
+  async function ensureFaceModel(){
+    if(model) return;
+    // load scripts dynamically
+    const scripts = [
+      'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.21.0/dist/tf.min.js',
+      'https://cdn.jsdelivr.net/npm/@tensorflow-models/face-landmarks-detection@1.0.2/dist/face-landmarks-detection.min.js'
+    ];
+    for(const s of scripts){
+      if(!document.querySelector(`script[src='${s}']`)){
+        await new Promise((res,rej)=>{const sc=document.createElement('script');sc.src=s;sc.onload=res;sc.onerror=rej;document.head.appendChild(sc);});
+      }
+    }
+    try{
+      model = await faceLandmarksDetection.load(faceLandmarksDetection.SupportedPackages.mediapipeFacemesh);
+    }catch(err){console.error('model load err',err);}
+  }
+
+  async function analyzeFace(){
+    // draw and scale
+    const fit = drawImageFit();
+    const inputs = ctx.getImageData(0,0,canvas.width,canvas.height);
+    // run detection on canvas image
+    const predictions = await model.estimateFaces({input: canvas});
+    if(!predictions || !predictions.length){ summarytxt.innerHTML='No face detected. Try a clearer portrait or switch to Manual.'; return; }
+    // take first face
+    const face = predictions[0];
+    const keypoints = face.scaledMesh || face.mesh || [];
+    // scaledMesh follows MediaPipe: 468 landmarks
+    // We'll pick approximate indices: chin ~152, forehead-top ~10, left-cheek ~234, right-cheek ~454, left-eye outer 33, right-eye outer 263, nose-tip 1
+    const idx = (i)=> (keypoints[i]?{x:keypoints[i][0], y:keypoints[i][1]}:null);
+    const forehead = idx(10) || idx(9) || idx(8);
+    const chin = idx(152) || idx(200);
+    const leftCheek = idx(234) || idx(93);
+    const rightCheek = idx(454) || idx(323);
+    const leftEye = idx(33); const rightEye = idx(263);
+    const nose = idx(1) || idx(4);
+
+    // draw landmarks
+    ctx.fillStyle='rgba(255,255,255,0.9)';
+    [forehead,chin,leftCheek,rightCheek,leftEye,rightEye,nose].forEach(p=>{ if(p){ ctx.beginPath(); ctx.arc(p.x,p.y,3,0,Math.PI*2); ctx.fill(); }});
+    // important distances
+    const faceHeight = forehead && chin ? dist(forehead,chin) : null;
+    const faceWidth = leftCheek && rightCheek ? dist(leftCheek,rightCheek) : null;
+    const eyeSeparation = leftEye && rightEye ? dist(leftEye,rightEye) : null;
+    const noseToChin = nose && chin ? dist(nose,chin) : null;
+
+    // compute ratios to compare with phi
+    const phi = 1.618033988749895;
+    const measures = [];
+    if(faceHeight && faceWidth) measures.push({name:'Face height / width',a:faceHeight,b:faceWidth,ratio:faceHeight/faceWidth});
+    if(noseToChin && eyeSeparation) measures.push({name:'Nose-to-chin / eye-sep',a:noseToChin,b:eyeSeparation,ratio:noseToChin/eyeSeparation});
+    if(faceHeight && noseToChin) measures.push({name:'Face height / nose-to-chin',a:faceHeight,b:noseToChin,ratio:faceHeight/noseToChin});
+
+    // show
+    measlist.innerHTML = measures.map(m=>`${m.name}: ${m.ratio.toFixed(3)} ( ${m.a.toFixed(0)} / ${m.b.toFixed(0)} px )`).join('<br>');
+    // pick the measure closest to target
+    const target = compareSel.value==='phi'?phi:1/phi;
+    let best = null;
+    for(const m of measures){ const pct = Math.abs((m.ratio-target)/target)*100; if(!best || pct<best.pct) best={m,pct}; }
+    if(best){
+      const good = best.pct<5; summarytxt.innerHTML = `<div class='${good?'ratio-good':'ratio-bad'}'>Best match: ${best.m.name} → ${best.m.ratio.toFixed(3)} ( ${best.pct.toFixed(2)}% off ${target.toFixed(6)} )</div>`;
+    }else{ summarytxt.innerHTML='Insufficient landmarks to compute standard measures. Try Manual mode.'; }
+  }
+
+  // Simple edge suggestion (very basic) — uses Canvas getImageData + sobel-ish gradient
+  async function autoEdgeSuggest(){
+    const fit = drawImageFit();
+    const w = canvas.width, h = canvas.height; const image = ctx.getImageData(0,0,w,h);
+    // convert to grayscale
+    const data = image.data; const gray = new Float32Array(w*h);
+    for(let i=0, p=0;i<w*h;i++,p+=4){gray[i]=0.299*data[p]+0.587*data[p+1]+0.114*data[p+2];}
+    // simple gradient magnitude
+    const g = new Float32Array(w*h);
+    for(let y=1;y<h-1;y++) for(let x=1;x<w-1;x++){ const i=y*w+x; const gx = -gray[i-w-1]-2*gray[i-1]-gray[i+w-1]+gray[i-w+1]+2*gray[i+1]+gray[i+w+1]; const gy = -gray[i-w-1]-2*gray[i-w]-gray[i-w+1]+gray[i+w-1]+2*gray[i+w]+gray[i+w+1]; g[i]=Math.hypot(gx,gy); }
+    // find brightest points as suggestions
+    let indices = Array.from({length:w*h},(_,i)=>i);
+    indices.sort((a,b)=>g[b]-g[a]);
+    // pick top two clusters for segment A and two for B
+    const picks = indices.slice(0,200).map(i=>({i,x:i%w,y:Math.floor(i/w),val:g[i]}));
+    // cluster by distance — just pick farthest apart pairs
+    function pickFarthest(list){ let best=[0,1,0]; for(let i=0;i<list.length;i++) for(let j=i+1;j<list.length;j++){ const dx=list[i].x-list[j].x, dy=list[i].y-list[j].y; const d=dx*dx+dy*dy; if(d>best[2]) best=[list[i],list[j],d]; } return [best[0],best[1]]; }
+    const [p1,p2]=pickFarthest(picks.slice(0,60));
+    const [p3,p4]=pickFarthest(picks.slice(60,140));
+    // draw suggestions
+    ctx.fillStyle='#7ee0ff'; [p1,p2,p3,p4].forEach((p,i)=>{ ctx.beginPath(); ctx.arc(p.x,p.y,5,0,Math.PI*2); ctx.fill(); ctx.fillStyle='white'; ctx.fillText((i+1),p.x+6,p.y-6); ctx.fillStyle='#7ee0ff';});
+    const d1=Math.hypot(p1.x-p2.x,p1.y-p2.y); const d2=Math.hypot(p3.x-p4.x,p3.y-p4.y);
+    showRatio(d1,d2,'Auto-edge suggestion (verify)');
+  }
+
+  // Resize canvas to available width
+  function fitCanvas(){ const maxW = Math.min(window.innerWidth-80,1000); canvas.width = Math.max(600, Math.floor(maxW)); canvas.height = Math.floor(canvas.width * 0.66); if(imgLoaded) drawImageFit(); }
+  window.addEventListener('resize', fitCanvas); fitCanvas();
+
+  </script>
+</body>
+</html>
