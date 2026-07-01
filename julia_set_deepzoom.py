@@ -4,7 +4,7 @@ Julia Set Visualiser — Deep Zoom Edition
 ─────────────────────────────────────────────────────────────────────
 A fixed, high-performance rewrite that resolves two real bugs found in
 the previous "advanced" version, plus a full visual-quality pass.
-
+THIS CODE IS BEEN GENERATED FULLY USING CALUDE A.I AS THE PREVIOUS VERSION (julia_set(modified).py) MADE BY MYSELF (MATH) WITH GEMINI A.I HAD FEW ERRORS OR BUGS WHICH NOW IS BEEN RESOLVED USING CLAUDE
 BUG #1 — Zoom "returns to a previous point" / gets stuck repeating
 ────────────────────────────────────────────────────────────────────
 The old cycle-detector rejected a new zoom target if it was close to
