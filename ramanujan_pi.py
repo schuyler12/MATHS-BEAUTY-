@@ -8,40 +8,8 @@ Ramanujan's 1914 series for 1/pi:
                     2*sqrt(2)     inf   (4k)! * (1103 + 26390k)
         1 / pi  =  -----------  * SUM  --------------------------
                        9801       k=0      (k!)^4 * 396^(4k)
-
-Why not plain `float`/`double`?
---------------------------------
-Python's built-in float is an IEEE-754 double: ~15-17 significant
-decimal digits, after which it simply cannot represent more precision
--- no matter how the formula is written, the *hardware* float format
-runs out of bits. To go beyond that we switch the entire computation
-to the `decimal` module, whose `Decimal` type supports arbitrary,
-user-configurable precision (bounded only by memory/time).
-
-Performance/accuracy design
-----------------------------
-1. Each successive term of Ramanujan's series contributes roughly
-   8 additional correct decimal digits (this falls out of the
-   asymptotics of (4k)!/(k!)^4 growing like 256^k against 396^(4k)
-   in the denominator: 256/396**4 ~ 1.04e-8 per step). So the number
-   of terms needed is ceil(digits / 8), plus a small safety margin.
-
-2. Rather than recomputing (4k)!, (k!)^4 and 396^(4k) from scratch
-   for every term (which would mean repeated huge-integer work), we
-   track the ratio a_k = (4k)!/(k!)^4/396^(4k) *incrementally*:
-
+                       
         a_(k+1) = a_k * (4k+1)(4k+2)(4k+3)(4k+4) / ((k+1)^4 * 396^4)
-
-   Each step is then just a handful of multiply/divide operations on
-   Decimal numbers already held at the working precision, rather than
-   growing integers whose digit count increases without bound. This
-   keeps both memory and CPU cost close to O(terms) instead of
-   O(terms^2).
-
-3. A small number of "guard digits" (extra working precision beyond
-   what's requested) is carried through the computation and only
-   trimmed off when the final answer is formatted, to absorb
-   round-off from the repeated division/rounding of Decimal ops.
 """
 
 from decimal import Decimal, getcontext, localcontext
