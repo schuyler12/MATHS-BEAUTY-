@@ -9,33 +9,9 @@
  *         1 / pi  =  -----------  * SUM  --------------------------
  *                        9801       k=0      (k!)^4 * 396^(4k)
  *
- * Why not plain `double`?
- * ------------------------
- * `double` is IEEE-754 binary64: ~15-17 significant decimal digits,
- * a hard limit baked into the hardware format -- no algorithm can
- * push a double past that. To go beyond it we use GMP's `mpf_t`
- * arbitrary-precision floating-point type, whose precision (in bits)
- * we set explicitly based on how many digits the user asks for.
- *
- * Performance / accuracy design
- * -------------------------------
- * 1. Each successive term of Ramanujan's series contributes roughly
- *    8 additional correct decimal digits (256/396^4 ~ 1.04e-8 shrink
- *    per term), so terms_needed ~= digits/8, plus a safety margin.
- *
- * 2. Instead of recomputing (4k)!, (k!)^4 and 396^(4k) from scratch
- *    every iteration, the ratio a_k = (4k)!/(k!)^4/396^(4k) is
- *    updated incrementally:
+ 
  *
  *        a_(k+1) = a_k * (4k+1)(4k+2)(4k+3)(4k+4) / ((k+1)^4 * 396^4)
- *
- *    keeping the per-term cost roughly constant instead of growing,
- *    so total cost stays close to O(terms) rather than O(terms^2).
- *
- * 3. A block of "guard bits" beyond the requested precision is
- *    carried through the whole computation and only the requested
- *    number of digits is printed at the end, absorbing accumulated
- *    round-off from repeated division.
  *
  * Dependencies
  * ------------
